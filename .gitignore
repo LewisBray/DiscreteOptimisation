@@ -1,0 +1,8 @@
+#folders
+/data
+
+#files
+*.java
+*.pdf
+*.py
+_coursera
