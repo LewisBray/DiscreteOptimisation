@@ -69,6 +69,77 @@ fn greedy_solution(
     return solution;
 }
 
+fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution {
+    var solution = Solution{
+        .objective_value = 0,
+        .optimal = 0,
+        .decision_variables = std.ArrayList(u8).init(std.heap.page_allocator)
+    };
+
+    solution.decision_variables.resize(items.len) catch return solution;   // TODO: be better
+    for (0..solution.decision_variables.items.len) |index| {
+        solution.decision_variables.items[index] = 0;
+    }
+
+    const table_width = max_capacity + 1;
+    const table_height = items.len + 1;
+
+    var table = std.heap.page_allocator.alloc(u32, table_width * table_height) catch return solution;
+    defer std.heap.page_allocator.free(table);
+
+    // set the value to 0 for all capacities when no items
+    for (0..table_width) |capacity| {
+        table[capacity] = 0;
+    }
+
+    for (1..table_height) |row| {
+        const item_index: usize = row - 1;
+        const item: Item = items[item_index];
+        for (0..table_width) |column| {
+            const capacity: u32 = @truncate(column);
+            const cell_index: usize = row * table_width + column;
+
+            const item_not_picked_cell_index: usize = (row - 1) * table_width + column;
+            const item_not_picked_value: u32 = table[item_not_picked_cell_index];
+
+            const remaining_capacity_column: usize = column - @min(item.weight, column);
+            const remaining_capacity_cell_index: usize = (row - 1) * table_width + remaining_capacity_column;
+            const item_picked_value: u32 = item.value + table[remaining_capacity_cell_index];
+
+            if (item.weight > capacity) {
+                table[cell_index] = item_not_picked_value;
+            } else {
+                table[cell_index] = @max(item_picked_value, item_not_picked_value);
+            }
+        }
+    }
+
+    solution.objective_value = table[items.len * table_width + max_capacity];
+    solution.optimal = 1;
+
+    var capacity: usize = max_capacity;
+    var row_index: usize = items.len;
+    while (row_index > 0) : (row_index -= 1) {
+        const cell_value: u32 = table[row_index * table_width + capacity];
+        const adjacent_cell_value: u32 = table[(row_index - 1) * table_width + capacity];
+        if (cell_value > adjacent_cell_value) {
+            const item_index: usize = row_index - 1;
+            solution.decision_variables.items[item_index] = 1;
+            capacity -= items[item_index].weight;
+        }
+    }
+
+    // for (0..table_height) |row| {
+    //     for (0..table_width) |column| {
+    //         const value: u32 = table[table_width * row + column];
+    //         std.debug.print("{}\t", .{value});
+    //     }
+    //     std.debug.print("\n", .{});
+    // }
+
+    return solution;
+}
+
 fn print_solution(solution: *const Solution) void {
     std.debug.print("{} {}\n", .{solution.objective_value, solution.optimal});
     for (solution.decision_variables.items) |decision_variable| {
@@ -125,6 +196,7 @@ pub fn main() void {
     }
 
     const greedy_by_value: Solution = greedy_solution(&values, value_greater_than, &items, max_capacity);
+    std.debug.print("greedy solution by value:\n", .{});
     print_solution(&greedy_by_value);
     std.debug.print("\n", .{});
 
@@ -134,6 +206,7 @@ pub fn main() void {
     }
 
     const greedy_by_weight: Solution = greedy_solution(&weights, value_less_than, &items, max_capacity);
+    std.debug.print("greedy solution by weight:\n", .{});
     print_solution(&greedy_by_weight);
     std.debug.print("\n", .{});
 
@@ -143,5 +216,11 @@ pub fn main() void {
     }
 
     const greedy_by_value_density: Solution = greedy_solution(&value_densities, value_greater_than, &items, max_capacity);
+    std.debug.print("greedy solution by value density:\n", .{});
     print_solution(&greedy_by_value_density);
+    std.debug.print("\n", .{});
+
+    const dynamic_solution: Solution = dynamic_programming_solution(&items, max_capacity);
+    std.debug.print("dynamic programming solution:\n", .{});
+    print_solution(&dynamic_solution);
 }
