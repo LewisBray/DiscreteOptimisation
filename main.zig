@@ -1,6 +1,3 @@
-// greedy algorithms
-// dynamic programming
-// depth first
 // best first
 // least discrepency
 
@@ -14,8 +11,28 @@ const Item = struct {
 const Solution = struct {
     objective_value: u32,
     optimal: u8,
-    decision_variables: std.ArrayList(u8)
+    decision_variables: []u8
 };
+
+fn construct_default_solution(item_count: usize) Solution {
+    var solution = Solution{
+        .objective_value = 0,
+        .optimal = 0,
+        .decision_variables = std.heap.page_allocator.alloc(u8, item_count) catch unreachable
+    };
+
+    @memset(solution.decision_variables, 0);
+
+    return solution;
+}
+
+fn print_solution(solution: *const Solution) void {
+    std.debug.print("{} {}\n", .{solution.objective_value, solution.optimal});
+    for (solution.decision_variables) |decision_variable| {
+        std.debug.print("{} ", .{decision_variable});
+    }
+    std.debug.print("\n", .{});
+}
 
 fn value_less_than(values: []const f32, lhs: usize, rhs: usize) bool {
     return values[lhs] < values[rhs];
@@ -31,31 +48,21 @@ fn greedy_solution(
     items: []const Item,
     max_capacity: u32
 ) Solution {
-    var solution = Solution{
-        .objective_value = 0,
-        .optimal = 0,
-        .decision_variables = std.ArrayList(u8).init(std.heap.page_allocator)
-    };
+    var solution: Solution = construct_default_solution(items.len);
 
-    solution.decision_variables.resize(values.len) catch return solution;   // TODO: be better
-    for (0..solution.decision_variables.items.len) |index| {
-        solution.decision_variables.items[index] = 0;
-    }
-
-    var sorted_indices = std.ArrayList(usize).init(std.heap.page_allocator);
-    defer sorted_indices.deinit();
-    sorted_indices.resize(values.len) catch return solution;    // TODO: be better
+    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, values.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_indices);
     for (0..values.len) |index| {
-        sorted_indices.items[index] = index;
+        sorted_indices[index] = index;
     }
 
-    std.sort.block(usize, sorted_indices.items, values, value_comparison_fn);
-    for (sorted_indices.items) |index| {
+    std.sort.block(usize, sorted_indices, values, value_comparison_fn);
+    for (sorted_indices) |index| {
         std.debug.print("{d}, {}\n", .{values[index], index});
     }
 
     var capacity: u32 = 0;
-    for (sorted_indices.items) |item_index| {
+    for (sorted_indices) |item_index| {
         const item: Item = items[item_index];
         if (capacity + item.weight > max_capacity) {
             continue;
@@ -63,34 +70,21 @@ fn greedy_solution(
 
         capacity += item.weight;
         solution.objective_value += item.value;
-        solution.decision_variables.items[item_index] = 1;
+        solution.decision_variables[item_index] = 1;
     }
 
     return solution;
 }
 
 fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution {
-    var solution = Solution{
-        .objective_value = 0,
-        .optimal = 0,
-        .decision_variables = std.ArrayList(u8).init(std.heap.page_allocator)
-    };
+    var solution: Solution = construct_default_solution(items.len);
 
-    solution.decision_variables.resize(items.len) catch return solution;   // TODO: be better
-    for (0..solution.decision_variables.items.len) |index| {
-        solution.decision_variables.items[index] = 0;
-    }
+    const table_width: usize = @as(usize, max_capacity + 1);
+    const table_height: usize = items.len + 1;
 
-    const table_width = max_capacity + 1;
-    const table_height = items.len + 1;
-
-    var table = std.heap.page_allocator.alloc(u32, table_width * table_height) catch return solution;
+    var table: []u32 = std.heap.page_allocator.alloc(u32, table_width * table_height) catch unreachable;
     defer std.heap.page_allocator.free(table);
-
-    // set the value to 0 for all capacities when no items
-    for (0..table_width) |capacity| {
-        table[capacity] = 0;
-    }
+    @memset(table, 0);
 
     for (1..table_height) |row| {
         const item_index: usize = row - 1;
@@ -106,15 +100,12 @@ fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution
             const remaining_capacity_cell_index: usize = (row - 1) * table_width + remaining_capacity_column;
             const item_picked_value: u32 = item.value + table[remaining_capacity_cell_index];
 
-            if (item.weight > capacity) {
-                table[cell_index] = item_not_picked_value;
-            } else {
-                table[cell_index] = @max(item_picked_value, item_not_picked_value);
-            }
+            const max_value: u32 = @max(item_picked_value, item_not_picked_value);
+            table[cell_index] = if (item.weight > capacity) item_not_picked_value else max_value;
         }
     }
 
-    solution.objective_value = table[items.len * table_width + max_capacity];
+    solution.objective_value = table[table.len - 1];
     solution.optimal = 1;
 
     var capacity: usize = max_capacity;
@@ -124,7 +115,7 @@ fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution
         const adjacent_cell_value: u32 = table[(row_index - 1) * table_width + capacity];
         if (cell_value > adjacent_cell_value) {
             const item_index: usize = row_index - 1;
-            solution.decision_variables.items[item_index] = 1;
+            solution.decision_variables[item_index] = 1;
             capacity -= items[item_index].weight;
         }
     }
@@ -140,12 +131,45 @@ fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution
     return solution;
 }
 
-fn print_solution(solution: *const Solution) void {
-    std.debug.print("{} {}\n", .{solution.objective_value, solution.optimal});
-    for (solution.decision_variables.items) |decision_variable| {
-        std.debug.print("{} ", .{decision_variable});
+fn exhaustive_search_solution_impl(
+    items: []const Item,
+    current_item_index: usize,
+    remaining_capacity: u32,
+    current_solution: *Solution,
+    best_solution: *Solution
+) void {
+    if (current_item_index >= items.len) {
+        return;
     }
-    std.debug.print("\n", .{});
+
+    const current_item: Item = items[current_item_index];
+    if (current_item.weight <= remaining_capacity) {
+        current_solution.objective_value += current_item.value;
+        current_solution.decision_variables[current_item_index] = 1;
+
+        if (current_solution.objective_value > best_solution.objective_value) {
+            best_solution.objective_value = current_solution.objective_value;
+            @memcpy(best_solution.decision_variables, current_solution.decision_variables);
+        }
+
+        exhaustive_search_solution_impl(items, current_item_index + 1, remaining_capacity - current_item.weight, current_solution, best_solution);
+
+        current_solution.objective_value -= current_item.value;
+        current_solution.decision_variables[current_item_index] = 0;
+    }
+
+    exhaustive_search_solution_impl(items, current_item_index + 1, remaining_capacity, current_solution, best_solution);
+}
+
+fn exhaustive_search_solution(items: []const Item, max_capacity: u32) Solution {
+    var current_solution: Solution = construct_default_solution(items.len);
+    defer std.heap.page_allocator.free(current_solution.decision_variables);
+
+    var best_solution: Solution = construct_default_solution(items.len);
+    exhaustive_search_solution_impl(items, 0, max_capacity, &current_solution, &best_solution);
+    best_solution.optimal = 1;
+
+    return best_solution;
 }
 
 pub fn main() void {
@@ -223,4 +247,9 @@ pub fn main() void {
     const dynamic_solution: Solution = dynamic_programming_solution(&items, max_capacity);
     std.debug.print("dynamic programming solution:\n", .{});
     print_solution(&dynamic_solution);
+    std.debug.print("\n", .{});
+
+    const exhaustive_solution: Solution = exhaustive_search_solution(&items, max_capacity);
+    std.debug.print("exhaustive search solution:\n", .{});
+    print_solution(&exhaustive_solution);
 }
