@@ -57,9 +57,6 @@ fn greedy_solution(
     }
 
     std.sort.block(usize, sorted_indices, values, value_comparison_fn);
-    for (sorted_indices) |index| {
-        std.debug.print("{d}, {}\n", .{values[index], index});
-    }
 
     var capacity: u32 = 0;
     for (sorted_indices) |item_index| {
@@ -172,14 +169,114 @@ fn exhaustive_search_solution(items: []const Item, max_capacity: u32) Solution {
     return best_solution;
 }
 
-pub fn main() void {
-    // const items = [3]Item{
-    //     Item{.value = 5, .weight = 4},
-    //     Item{.value = 6, .weight = 5},
-    //     Item{.value = 3, .weight = 2}
-    // };
+fn item_value_density_greater_than(items: []const Item, lhs: usize, rhs: usize) bool {
+    const lhs_item: Item = items[lhs];
+    const lhs_value: f32 = @floatFromInt(lhs_item.value);
+    const lhs_weight: f32 = @floatFromInt(lhs_item.weight);
+    const lhs_value_density: f32 = lhs_value / lhs_weight;
+    
+    const rhs_item: Item = items[rhs];
+    const rhs_value: f32 = @floatFromInt(rhs_item.value);
+    const rhs_weight: f32 = @floatFromInt(rhs_item.weight);
+    const rhs_value_density: f32 = rhs_value / rhs_weight;
+    
+    return lhs_value_density > rhs_value_density;
+}
 
-    // const max_capacity: u32 = 9;
+fn calculate_remaining_optimistic_max_value(items: []const Item, starting_item_index: usize, current_value: u32, current_capacity: u32) u32 {
+    var result: u32 = current_value;
+    var remaining_capacity: u32 = current_capacity;
+    for (starting_item_index..items.len) |item_index| {
+        const item: Item = items[item_index];
+        if (item.weight <= remaining_capacity) {
+            result += item.value;
+            remaining_capacity -= item.weight;
+        } else {
+            const ratio: f32 = @as(f32, @floatFromInt(remaining_capacity)) / @as(f32, @floatFromInt(item.weight));
+            const fractional_value: f32 = ratio * @as(f32, @floatFromInt(item.value));
+            result += @intFromFloat(fractional_value);
+            break;
+        }
+    }
+
+    return result;
+}
+
+fn depth_first_branch_and_bound_solution_impl(
+    items: []const Item,
+    current_item_index: usize,
+    remaining_capacity: u32,
+    optimistic_max_value: u32,
+    current_solution: *Solution,
+    best_solution: *Solution
+) void {
+    if (current_item_index >= items.len or optimistic_max_value <= best_solution.objective_value) {
+        return;
+    }
+    
+    const current_item: Item = items[current_item_index];
+    if (current_item.weight <= remaining_capacity) {
+        current_solution.objective_value += current_item.value;
+        current_solution.decision_variables[current_item_index] = 1;
+
+        if (current_solution.objective_value > best_solution.objective_value) {
+            best_solution.objective_value = current_solution.objective_value;
+            @memcpy(best_solution.decision_variables, current_solution.decision_variables);
+        }
+
+        depth_first_branch_and_bound_solution_impl(items, current_item_index + 1, remaining_capacity - current_item.weight, optimistic_max_value, current_solution, best_solution);
+
+        current_solution.objective_value -= current_item.value;
+        current_solution.decision_variables[current_item_index] = 0;
+    }
+
+    const new_optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(items, current_item_index + 1, current_solution.objective_value, remaining_capacity);
+    depth_first_branch_and_bound_solution_impl(items, current_item_index + 1, remaining_capacity, new_optimistic_max_value, current_solution, best_solution);
+}
+
+fn depth_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
+    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_indices);
+    for (0..items.len) |index| {
+        sorted_indices[index] = index;
+    }
+    
+    std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
+    
+    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_items);
+
+    for (0..items.len) |index| {
+        const sorted_item_index: usize = sorted_indices[index];
+        sorted_items[index] = items[sorted_item_index];
+    }
+
+    var solution: Solution = construct_default_solution(sorted_items.len);
+
+    var sorted_solution: Solution = construct_default_solution(sorted_items.len);
+    defer std.heap.page_allocator.free(sorted_solution.decision_variables);
+
+    const optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(items, 0, 0, max_capacity);
+    depth_first_branch_and_bound_solution_impl(sorted_items, 0, max_capacity, optimistic_max_value, &solution, &sorted_solution);
+    
+    solution.objective_value = sorted_solution.objective_value;
+    solution.optimal = 1;
+    for (0..items.len) |index| {
+        const original_item_index: usize = sorted_indices[index];
+        solution.decision_variables[original_item_index] = sorted_solution.decision_variables[index];
+    }
+
+    return solution;
+}
+
+pub fn main() void {
+//    const items = [3]Item{
+//       Item{.value = 5, .weight = 4},
+//       Item{.value = 6, .weight = 5},
+//       Item{.value = 3, .weight = 2}
+//    };
+//
+//    const max_capacity: u32 = 9;
 
     const items = [4]Item{
         Item{.value = 16, .weight = 2},
@@ -190,29 +287,29 @@ pub fn main() void {
 
     const max_capacity: u32 = 7;
 
-    // const items = [19]Item{
-    //     Item{.value = 1945, .weight = 4990},
-    //     Item{.value = 321, .weight = 1142},
-    //     Item{.value = 2945, .weight = 7390},
-    //     Item{.value = 4136, .weight = 10372},
-    //     Item{.value = 1107, .weight = 3114},
-    //     Item{.value = 1022, .weight = 2744},
-    //     Item{.value = 1101, .weight = 3102},
-    //     Item{.value = 2890, .weight = 7280},
-    //     Item{.value = 962, .weight = 2624},
-    //     Item{.value = 1060, .weight = 3020},
-    //     Item{.value = 805, .weight = 2310},
-    //     Item{.value = 689, .weight = 2078},
-    //     Item{.value = 1513, .weight = 3926},
-    //     Item{.value = 3878, .weight = 9656},
-    //     Item{.value = 13504, .weight = 32708},
-    //     Item{.value = 1865, .weight = 4830},
-    //     Item{.value = 667, .weight = 2034},
-    //     Item{.value = 1833, .weight = 4766},
-    //     Item{.value = 16553, .weight = 40006}
-    // };
-
-    // const max_capacity: u32 = 31181;
+//    const items = [19]Item{
+//        Item{.value = 1945, .weight = 4990},
+//        Item{.value = 321, .weight = 1142},
+//        Item{.value = 2945, .weight = 7390},
+//        Item{.value = 4136, .weight = 10372},
+//        Item{.value = 1107, .weight = 3114},
+//        Item{.value = 1022, .weight = 2744},
+//        Item{.value = 1101, .weight = 3102},
+//        Item{.value = 2890, .weight = 7280},
+//        Item{.value = 962, .weight = 2624},
+//        Item{.value = 1060, .weight = 3020},
+//        Item{.value = 805, .weight = 2310},
+//        Item{.value = 689, .weight = 2078},
+//        Item{.value = 1513, .weight = 3926},
+//        Item{.value = 3878, .weight = 9656},
+//        Item{.value = 13504, .weight = 32708},
+//        Item{.value = 1865, .weight = 4830},
+//        Item{.value = 667, .weight = 2034},
+//        Item{.value = 1833, .weight = 4766},
+//        Item{.value = 16553, .weight = 40006}
+//    };
+//
+//    const max_capacity: u32 = 31181;
 
     var values: [items.len]f32 = undefined;
     for (0..items.len) |index| {
@@ -244,12 +341,17 @@ pub fn main() void {
     print_solution(&greedy_by_value_density);
     std.debug.print("\n", .{});
 
-    const dynamic_solution: Solution = dynamic_programming_solution(&items, max_capacity);
+    const dynamic_programming: Solution = dynamic_programming_solution(&items, max_capacity);
     std.debug.print("dynamic programming solution:\n", .{});
-    print_solution(&dynamic_solution);
+    print_solution(&dynamic_programming);
     std.debug.print("\n", .{});
 
-    const exhaustive_solution: Solution = exhaustive_search_solution(&items, max_capacity);
+    const exhaustive_search: Solution = exhaustive_search_solution(&items, max_capacity);
     std.debug.print("exhaustive search solution:\n", .{});
-    print_solution(&exhaustive_solution);
+    print_solution(&exhaustive_search);
+    std.debug.print("\n", .{});
+    
+    const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(&items, max_capacity);
+    std.debug.print("depth first solution:\n", .{});
+    print_solution(&depth_first_branch_and_bound);
 }
