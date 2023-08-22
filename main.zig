@@ -1,4 +1,3 @@
-// best first
 // least discrepency
 
 const std = @import("std");
@@ -269,6 +268,171 @@ fn depth_first_branch_and_bound_solution(items: []const Item, max_capacity: u32)
     return solution;
 }
 
+const Node = struct {
+    solution: Solution,
+    current_item_index: u32,
+    remaining_capacity: u32,
+    optimistic_max_value: u32
+};
+
+const PriorityQueue = struct {
+    nodes: std.ArrayList(Node)
+};
+
+fn swap(lhs: *Node, rhs: *Node) void {
+    const temp: Node = lhs.*;
+    lhs.* = rhs.*;
+    rhs.* = temp;
+}
+
+fn push(queue: *PriorityQueue, new_node: Node) void {
+    queue.nodes.append(new_node) catch unreachable;
+    
+    var node_index: usize = queue.nodes.items.len - 1;
+    while (node_index != 0) {
+        const node: *Node = &queue.nodes.items[node_index];
+        const parent_node_index: usize = (node_index - 1) / 2;
+        const parent_node: *Node = &queue.nodes.items[parent_node_index];
+        if (node.optimistic_max_value > parent_node.optimistic_max_value) {
+            swap(node, parent_node);
+            node_index = parent_node_index;
+        } else {
+            break;
+        }
+    }
+}
+
+fn pop(queue: *PriorityQueue) Node {
+    const result: Node = queue.nodes.items[0];
+    queue.nodes.items[0] = queue.nodes.items[queue.nodes.items.len - 1];
+    _ = queue.nodes.pop();
+    
+    var node_index: usize = 0;
+    const nodes: []Node = queue.nodes.items;
+    const node_count: usize = nodes.len;
+    while (node_index < node_count) {
+        const node: *Node = &nodes[node_index];
+        const child_node_1_index: usize = @min(2 * node_index + 1, node_count - 1);
+        const child_node_1: *Node = &nodes[child_node_1_index];
+        const child_node_2_index: usize = @min(2 * node_index + 2, node_count - 1);
+        const child_node_2: *Node = &nodes[child_node_2_index];
+        const child_node_1_is_larger: bool = child_node_1.optimistic_max_value > child_node_2.optimistic_max_value;
+        const largest_child_node_index: usize = if (child_node_1_is_larger) child_node_1_index else child_node_2_index;
+        const largest_child_node: *Node = &nodes[largest_child_node_index];
+        const smallest_child_node_index: usize = if (child_node_1_is_larger) child_node_2_index else child_node_1_index;
+        const smallest_child_node: *Node = &nodes[smallest_child_node_index];
+        if (node.optimistic_max_value < largest_child_node.optimistic_max_value) {
+            swap(node, largest_child_node);
+            node_index = largest_child_node_index;
+        } else if (node.optimistic_max_value < smallest_child_node.optimistic_max_value) {
+            swap(node, smallest_child_node);
+            node_index = smallest_child_node_index;
+        } else {
+            break;
+        }
+    }
+    
+    return result;
+}
+
+fn is_empty(queue: *PriorityQueue) bool {
+    return queue.nodes.items.len == 0;
+}
+
+fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
+    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_indices);
+    for (0..items.len) |index| {
+        sorted_indices[index] = index;
+    }
+    
+    std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
+    
+    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_items);
+
+    for (0..items.len) |index| {
+        const sorted_item_index: usize = sorted_indices[index];
+        sorted_items[index] = items[sorted_item_index];
+    }
+
+    var best_solution: Solution = construct_default_solution(sorted_items.len);
+    defer std.heap.page_allocator.free(best_solution.decision_variables);
+
+    var queue = PriorityQueue{.nodes = std.ArrayList(Node).init(std.heap.page_allocator)};
+    
+    const first_node = Node{
+        .solution = construct_default_solution(items.len),
+        .current_item_index = 0,
+        .remaining_capacity = max_capacity,
+        .optimistic_max_value = calculate_remaining_optimistic_max_value(sorted_items, 0, 0, max_capacity),
+    };
+    
+    push(&queue, first_node);
+    while (!is_empty(&queue)) {
+        const current_node: Node = pop(&queue);
+        defer std.heap.page_allocator.free(current_node.solution.decision_variables);
+
+        if (current_node.solution.objective_value > best_solution.objective_value) {
+            best_solution.objective_value = current_node.solution.objective_value;
+            @memcpy(best_solution.decision_variables, current_node.solution.decision_variables);
+        }
+
+        if (current_node.current_item_index >= items.len or current_node.optimistic_max_value <= best_solution.objective_value) {
+            break;
+        }
+        
+        const current_item: Item = sorted_items[current_node.current_item_index];
+        if (current_item.weight <= current_node.remaining_capacity) {
+            var new_node = Node{
+                .solution = construct_default_solution(items.len),
+                .current_item_index = current_node.current_item_index + 1,
+                .remaining_capacity = current_node.remaining_capacity - current_item.weight,
+                .optimistic_max_value = current_node.optimistic_max_value
+            };
+            
+            new_node.solution.objective_value = current_node.solution.objective_value + current_item.value;
+            @memcpy(new_node.solution.decision_variables, current_node.solution.decision_variables);
+            new_node.solution.decision_variables[current_node.current_item_index] = 1;
+            
+            push(&queue, new_node);
+        }
+        
+        const new_optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(
+            sorted_items,
+            current_node.current_item_index + 1,
+            current_node.solution.objective_value,
+            current_node.remaining_capacity
+        );
+        
+        var new_node = Node{
+            .solution = construct_default_solution(items.len),
+            .current_item_index = current_node.current_item_index + 1,
+            .remaining_capacity = current_node.remaining_capacity,
+            .optimistic_max_value = new_optimistic_max_value
+        };
+        
+        new_node.solution.objective_value = current_node.solution.objective_value;
+        @memcpy(new_node.solution.decision_variables, current_node.solution.decision_variables);
+        
+        push(&queue, new_node);
+    }
+    
+    for (queue.nodes.items) |node| {
+        std.heap.page_allocator.free(node.solution.decision_variables);
+    }
+    
+    var solution: Solution = construct_default_solution(items.len);
+    solution.objective_value = best_solution.objective_value;
+    solution.optimal = 1;
+    for (0..items.len) |index| {
+        const original_item_index: usize = sorted_indices[index];
+        solution.decision_variables[original_item_index] = best_solution.decision_variables[index];
+    }
+
+    return solution;
+}
+
 pub fn main() void {
 //    const items = [3]Item{
 //       Item{.value = 5, .weight = 4},
@@ -354,4 +518,9 @@ pub fn main() void {
     const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(&items, max_capacity);
     std.debug.print("depth first solution:\n", .{});
     print_solution(&depth_first_branch_and_bound);
+    std.debug.print("\n", .{});
+    
+    const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(&items, max_capacity);
+    std.debug.print("best first solution:\n", .{});
+    print_solution(&best_first_branch_and_bound);
 }
