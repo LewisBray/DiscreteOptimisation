@@ -433,6 +433,115 @@ fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) 
     return solution;
 }
 
+fn least_discrepancy_branch_and_bound_solution_impl(
+    items: []const Item,
+    current_item_index: usize,
+    remaining_capacity: u32,
+    optimistic_max_value: u32,
+    remaining_accordances: u32,
+    remaining_discrepancies: u32,
+    current_solution: *Solution,
+    best_solution: *Solution
+) void {
+    if (current_item_index >= items.len or optimistic_max_value <= best_solution.objective_value) {
+        return;
+    }
+
+    const current_item: Item = items[current_item_index];
+    if (current_item.weight <= remaining_capacity and remaining_accordances > 0) {
+        current_solution.objective_value += current_item.value;
+        current_solution.decision_variables[current_item_index] = 1;
+
+        if (current_solution.objective_value > best_solution.objective_value) {
+            best_solution.objective_value = current_solution.objective_value;
+            @memcpy(best_solution.decision_variables, current_solution.decision_variables);
+        }
+
+        least_discrepancy_branch_and_bound_solution_impl(
+            items,
+            current_item_index + 1,
+            remaining_capacity - current_item.weight,
+            optimistic_max_value,
+            remaining_accordances - 1,
+            remaining_discrepancies,
+            current_solution,
+            best_solution
+        );
+
+        current_solution.objective_value -= current_item.value;
+        current_solution.decision_variables[current_item_index] = 0;
+    }
+
+    if (remaining_discrepancies > 0) {
+        const new_optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(
+            items,
+            current_item_index + 1,
+            current_solution.objective_value,
+            remaining_capacity
+        );
+        
+        least_discrepancy_branch_and_bound_solution_impl(
+            items,
+            current_item_index + 1,
+            remaining_capacity,
+            new_optimistic_max_value,
+            remaining_accordances,
+            remaining_discrepancies - 1,
+            current_solution,
+            best_solution
+        );
+    }
+}
+
+fn least_discrepancy_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
+    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_indices);
+    for (0..items.len) |index| {
+        sorted_indices[index] = index;
+    }
+    
+    std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
+
+    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
+    defer std.heap.page_allocator.free(sorted_items);
+
+    for (0..items.len) |index| {
+        const sorted_item_index: usize = sorted_indices[index];
+        sorted_items[index] = items[sorted_item_index];
+    }
+
+    var solution: Solution = construct_default_solution(items.len);
+
+    var sorted_solution: Solution = construct_default_solution(items.len);
+    defer std.heap.page_allocator.free(sorted_solution.decision_variables);
+
+    const initial_optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(sorted_items, 0, 0, max_capacity);
+    for (0..items.len + 1) |discrepancy_count| {
+        solution.objective_value = 0;
+        @memset(solution.decision_variables, 0);
+
+        least_discrepancy_branch_and_bound_solution_impl(
+            sorted_items,
+            0,
+            max_capacity,
+            initial_optimistic_max_value,
+            @truncate(items.len - discrepancy_count),
+            @truncate(discrepancy_count),
+            &solution,
+            &sorted_solution
+        );
+    }
+
+    solution.objective_value = sorted_solution.objective_value;
+    solution.optimal = 1;
+    for (0..items.len) |index| {
+        const original_item_index: usize = sorted_indices[index];
+        solution.decision_variables[original_item_index] = sorted_solution.decision_variables[index];
+    }
+
+    return solution;
+}
+
 pub fn main() void {
 //    const items = [3]Item{
 //       Item{.value = 5, .weight = 4},
@@ -523,4 +632,9 @@ pub fn main() void {
     const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(&items, max_capacity);
     std.debug.print("best first solution:\n", .{});
     print_solution(&best_first_branch_and_bound);
+    std.debug.print("\n", .{});
+
+    const least_discrepancy_branch_and_bound: Solution = least_discrepancy_branch_and_bound_solution(&items, max_capacity);
+    std.debug.print("least discrepancy solution:\n", .{});
+    print_solution(&least_discrepancy_branch_and_bound);
 }
