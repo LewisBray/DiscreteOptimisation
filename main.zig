@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Item = struct {
     value: u32,
@@ -12,15 +13,13 @@ const Problem = struct {
 
 const Solution = struct {
     objective_value: u32,
-    optimal: u8,
     decision_variables: []u8
 };
 
-fn construct_default_solution(item_count: usize) Solution {
+fn construct_default_solution(item_count: usize, allocator: Allocator) Solution {
     var solution = Solution{
         .objective_value = 0,
-        .optimal = 0,
-        .decision_variables = std.heap.page_allocator.alloc(u8, item_count) catch unreachable
+        .decision_variables = allocator.alloc(u8, item_count) catch unreachable
     };
 
     @memset(solution.decision_variables, 0);
@@ -28,8 +27,8 @@ fn construct_default_solution(item_count: usize) Solution {
     return solution;
 }
 
-fn print_solution(solution: *const Solution) void {
-    std.debug.print("{} {}\n", .{solution.objective_value, solution.optimal});
+fn print_solution(solution: *const Solution, optimal: u8) void {
+    std.debug.print("{} {}\n", .{solution.objective_value, optimal});
     for (solution.decision_variables) |decision_variable| {
         std.debug.print("{} ", .{decision_variable});
     }
@@ -45,12 +44,13 @@ fn value_greater_than(values: []const f32, lhs: usize, rhs: usize) bool {
 }
 
 fn greedy_solution(
+    problem: Problem,
     values: []const f32,
     comptime value_comparison_fn: fn (values: []const f32, lhs: usize, rhs: usize) bool,
-    items: []const Item,
-    max_capacity: u32
+    allocator: Allocator
 ) Solution {
-    var solution: Solution = construct_default_solution(items.len);
+    const items: []Item = problem.items;
+    var solution: Solution = construct_default_solution(items.len, allocator);
 
     var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, values.len) catch unreachable;
     defer std.heap.page_allocator.free(sorted_indices);
@@ -61,6 +61,7 @@ fn greedy_solution(
     std.sort.block(usize, sorted_indices, values, value_comparison_fn);
 
     var capacity: u32 = 0;
+    const max_capacity: u32 = problem.max_capacity;
     for (sorted_indices) |item_index| {
         const item: Item = items[item_index];
         if (capacity + item.weight > max_capacity) {
@@ -75,14 +76,16 @@ fn greedy_solution(
     return solution;
 }
 
-fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution {
-    var solution: Solution = construct_default_solution(items.len);
+fn dynamic_programming_solution(problem: Problem, allocator: Allocator) Solution {
+    const items: []Item = problem.items;
+    var solution: Solution = construct_default_solution(items.len, allocator);
 
+    const max_capacity: u32 = problem.max_capacity;
     const table_width: usize = @as(usize, max_capacity + 1);
     const table_height: usize = items.len + 1;
 
-    var table: []u32 = std.heap.page_allocator.alloc(u32, table_width * table_height) catch unreachable;
-    defer std.heap.page_allocator.free(table);
+    var table: []u32 = allocator.alloc(u32, table_width * table_height) catch unreachable;
+    defer allocator.free(table);
     @memset(table, 0);
 
     for (1..table_height) |row| {
@@ -105,7 +108,6 @@ fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution
     }
 
     solution.objective_value = table[table.len - 1];
-    solution.optimal = 1;
 
     var capacity: usize = max_capacity;
     var row_index: usize = items.len;
@@ -152,13 +154,13 @@ fn exhaustive_search_solution_impl(
     exhaustive_search_solution_impl(items, current_item_index + 1, remaining_capacity, current_solution, best_solution);
 }
 
-fn exhaustive_search_solution(items: []const Item, max_capacity: u32) Solution {
-    var current_solution: Solution = construct_default_solution(items.len);
-    defer std.heap.page_allocator.free(current_solution.decision_variables);
+fn exhaustive_search_solution(problem: Problem, allocator: Allocator) Solution {
+    const items: []Item = problem.items;
+    var current_solution: Solution = construct_default_solution(items.len, allocator);
+    defer allocator.free(current_solution.decision_variables);
 
-    var best_solution: Solution = construct_default_solution(items.len);
-    exhaustive_search_solution_impl(items, 0, max_capacity, &current_solution, &best_solution);
-    best_solution.optimal = 1;
+    var best_solution: Solution = construct_default_solution(items.len, allocator);
+    exhaustive_search_solution_impl(items, 0, problem.max_capacity, &current_solution, &best_solution);
 
     return best_solution;
 }
@@ -228,33 +230,34 @@ fn depth_first_branch_and_bound_solution_impl(
     depth_first_branch_and_bound_solution_impl(items, current_item_index + 1, remaining_capacity, new_optimistic_max_value, current_solution, best_solution);
 }
 
-fn depth_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
-    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_indices);
+fn depth_first_branch_and_bound_solution(problem: Problem, allocator: Allocator) Solution {
+    const items: []Item = problem.items;
+    var sorted_indices: []usize = allocator.alloc(usize, items.len) catch unreachable;
+    defer allocator.free(sorted_indices);
     for (0..items.len) |index| {
         sorted_indices[index] = index;
     }
     
     std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
     
-    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_items);
+    var sorted_items: []Item = allocator.alloc(Item, items.len) catch unreachable;
+    defer allocator.free(sorted_items);
 
     for (0..items.len) |index| {
         const sorted_item_index: usize = sorted_indices[index];
         sorted_items[index] = items[sorted_item_index];
     }
 
-    var solution: Solution = construct_default_solution(sorted_items.len);
+    var solution: Solution = construct_default_solution(sorted_items.len, allocator);
 
-    var sorted_solution: Solution = construct_default_solution(sorted_items.len);
-    defer std.heap.page_allocator.free(sorted_solution.decision_variables);
+    var sorted_solution: Solution = construct_default_solution(sorted_items.len, allocator);
+    defer allocator.free(sorted_solution.decision_variables);
 
+    const max_capacity: u32 = problem.max_capacity;
     const optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(items, 0, 0, max_capacity);
     depth_first_branch_and_bound_solution_impl(sorted_items, 0, max_capacity, optimistic_max_value, &solution, &sorted_solution);
     
     solution.objective_value = sorted_solution.objective_value;
-    solution.optimal = 1;
     for (0..items.len) |index| {
         const original_item_index: usize = sorted_indices[index];
         solution.decision_variables[original_item_index] = sorted_solution.decision_variables[index];
@@ -334,30 +337,32 @@ fn is_empty(queue: *PriorityQueue) bool {
     return queue.nodes.items.len == 0;
 }
 
-fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
-    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_indices);
+fn best_first_branch_and_bound_solution(problem: Problem, allocator: Allocator) Solution {
+    const items: []Item = problem.items;
+    var sorted_indices: []usize = allocator.alloc(usize, items.len) catch unreachable;
+    defer allocator.free(sorted_indices);
     for (0..items.len) |index| {
         sorted_indices[index] = index;
     }
     
     std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
     
-    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_items);
+    var sorted_items: []Item = allocator.alloc(Item, items.len) catch unreachable;
+    defer allocator.free(sorted_items);
 
     for (0..items.len) |index| {
         const sorted_item_index: usize = sorted_indices[index];
         sorted_items[index] = items[sorted_item_index];
     }
 
-    var best_solution: Solution = construct_default_solution(sorted_items.len);
-    defer std.heap.page_allocator.free(best_solution.decision_variables);
+    var best_solution: Solution = construct_default_solution(sorted_items.len, allocator);
+    defer allocator.free(best_solution.decision_variables);
 
-    var queue = PriorityQueue{.nodes = std.ArrayList(Node).init(std.heap.page_allocator)};
+    var queue = PriorityQueue{.nodes = std.ArrayList(Node).init(allocator)};
     
+    const max_capacity: u32 = problem.max_capacity;
     const first_node = Node{
-        .solution = construct_default_solution(items.len),
+        .solution = construct_default_solution(items.len, allocator),
         .current_item_index = 0,
         .remaining_capacity = max_capacity,
         .optimistic_max_value = calculate_remaining_optimistic_max_value(sorted_items, 0, 0, max_capacity),
@@ -366,7 +371,7 @@ fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) 
     push(&queue, first_node);
     while (!is_empty(&queue)) {
         const current_node: Node = pop(&queue);
-        defer std.heap.page_allocator.free(current_node.solution.decision_variables);
+        defer allocator.free(current_node.solution.decision_variables);
 
         if (current_node.solution.objective_value > best_solution.objective_value) {
             best_solution.objective_value = current_node.solution.objective_value;
@@ -380,7 +385,7 @@ fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) 
         const current_item: Item = sorted_items[current_node.current_item_index];
         if (current_item.weight <= current_node.remaining_capacity) {
             var new_node = Node{
-                .solution = construct_default_solution(items.len),
+                .solution = construct_default_solution(items.len, allocator),
                 .current_item_index = current_node.current_item_index + 1,
                 .remaining_capacity = current_node.remaining_capacity - current_item.weight,
                 .optimistic_max_value = current_node.optimistic_max_value
@@ -401,7 +406,7 @@ fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) 
         );
         
         var new_node = Node{
-            .solution = construct_default_solution(items.len),
+            .solution = construct_default_solution(items.len, allocator),
             .current_item_index = current_node.current_item_index + 1,
             .remaining_capacity = current_node.remaining_capacity,
             .optimistic_max_value = new_optimistic_max_value
@@ -414,12 +419,11 @@ fn best_first_branch_and_bound_solution(items: []const Item, max_capacity: u32) 
     }
     
     for (queue.nodes.items) |node| {
-        std.heap.page_allocator.free(node.solution.decision_variables);
+        allocator.free(node.solution.decision_variables);
     }
     
-    var solution: Solution = construct_default_solution(items.len);
+    var solution: Solution = construct_default_solution(items.len, allocator);
     solution.objective_value = best_solution.objective_value;
-    solution.optimal = 1;
     for (0..items.len) |index| {
         const original_item_index: usize = sorted_indices[index];
         solution.decision_variables[original_item_index] = best_solution.decision_variables[index];
@@ -488,28 +492,30 @@ fn least_discrepancy_branch_and_bound_solution_impl(
     }
 }
 
-fn least_discrepancy_branch_and_bound_solution(items: []const Item, max_capacity: u32) Solution {
-    var sorted_indices: []usize = std.heap.page_allocator.alloc(usize, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_indices);
+fn least_discrepancy_branch_and_bound_solution(problem: Problem, allocator: Allocator) Solution {
+    const items: []Item = problem.items;
+    var sorted_indices: []usize = allocator.alloc(usize, items.len) catch unreachable;
+    defer allocator.free(sorted_indices);
     for (0..items.len) |index| {
         sorted_indices[index] = index;
     }
     
     std.sort.block(usize, sorted_indices, items, item_value_density_greater_than);
 
-    var sorted_items: []Item = std.heap.page_allocator.alloc(Item, items.len) catch unreachable;
-    defer std.heap.page_allocator.free(sorted_items);
+    var sorted_items: []Item = allocator.alloc(Item, items.len) catch unreachable;
+    defer allocator.free(sorted_items);
 
     for (0..items.len) |index| {
         const sorted_item_index: usize = sorted_indices[index];
         sorted_items[index] = items[sorted_item_index];
     }
 
-    var solution: Solution = construct_default_solution(items.len);
+    var solution: Solution = construct_default_solution(items.len, allocator);
 
-    var sorted_solution: Solution = construct_default_solution(items.len);
-    defer std.heap.page_allocator.free(sorted_solution.decision_variables);
+    var sorted_solution: Solution = construct_default_solution(items.len, allocator);
+    defer allocator.free(sorted_solution.decision_variables);
 
+    const max_capacity: u32 = problem.max_capacity;
     const initial_optimistic_max_value: u32 = calculate_remaining_optimistic_max_value(sorted_items, 0, 0, max_capacity);
     for (0..items.len + 1) |discrepancy_count| {
         solution.objective_value = 0;
@@ -528,7 +534,6 @@ fn least_discrepancy_branch_and_bound_solution(items: []const Item, max_capacity
     }
 
     solution.objective_value = sorted_solution.objective_value;
-    solution.optimal = 1;
     for (0..items.len) |index| {
         const original_item_index: usize = sorted_indices[index];
         solution.decision_variables[original_item_index] = sorted_solution.decision_variables[index];
@@ -556,7 +561,7 @@ fn parse_u32(text: []u8) u32 {
     return result;
 }
 
-fn parse_problem(text: []u8) Problem {
+fn parse_problem(text: []u8, allocator: Allocator) Problem {
     var index: usize = 0;
     while (is_whitespace(text[index])) {
         index += 1;
@@ -581,7 +586,7 @@ fn parse_problem(text: []u8) Problem {
     const max_capacity: u32 = parse_u32(text[max_capacity_start..index]);
 
     var item_index: usize = 0;
-    var items: []Item = std.heap.page_allocator.alloc(Item, @as(usize, item_count)) catch unreachable;
+    var items: []Item = allocator.alloc(Item, @as(usize, item_count)) catch unreachable;
     while (index < text.len and item_index < @as(usize, item_count)) {
         while (is_whitespace(text[index])) {
             index += 1;
@@ -620,66 +625,65 @@ pub fn main() void {
     };
     defer file.close();
 
+    const allocator: Allocator = std.heap.page_allocator;
     const file_size = file.getEndPos() catch unreachable;
-    var text: []u8 = std.heap.page_allocator.alloc(u8, file_size) catch unreachable;
+    var text: []u8 = allocator.alloc(u8, file_size) catch unreachable;
     _ = file.readAll(text) catch unreachable;
 
-    const problem: Problem = parse_problem(text);
-
+    const problem: Problem = parse_problem(text, allocator);
     const items: []Item = problem.items;
-    const max_capacity: u32 = problem.max_capacity;
 
-    var values: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
+    var values: []f32 = allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         values[index] = @floatFromInt(items[index].value);
     }
 
-    const greedy_by_value: Solution = greedy_solution(values, value_greater_than, items, max_capacity);
+    const greedy_by_value: Solution = greedy_solution(problem, values, value_greater_than, allocator);
     std.debug.print("greedy solution by value:\n", .{});
-    print_solution(&greedy_by_value);
+    print_solution(&greedy_by_value, 0);
     std.debug.print("\n", .{});
 
-    var weights: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
+    var weights: []f32 = allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         weights[index] = @floatFromInt(items[index].weight);
     }
 
-    const greedy_by_weight: Solution = greedy_solution(weights, value_less_than, items, max_capacity);
+    const greedy_by_weight: Solution = greedy_solution(problem, weights, value_less_than, allocator);
     std.debug.print("greedy solution by weight:\n", .{});
-    print_solution(&greedy_by_weight);
+    print_solution(&greedy_by_weight, 0);
     std.debug.print("\n", .{});
 
-    var value_densities: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
+    var value_densities: []f32 = allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         value_densities[index] = values[index] / weights[index];
     }
 
-    const greedy_by_value_density: Solution = greedy_solution(value_densities, value_greater_than, items, max_capacity);
+    const greedy_by_value_density: Solution = greedy_solution(problem, value_densities, value_greater_than, allocator);
     std.debug.print("greedy solution by value density:\n", .{});
-    print_solution(&greedy_by_value_density);
+    print_solution(&greedy_by_value_density, 0);
     std.debug.print("\n", .{});
 
-    const dynamic_programming: Solution = dynamic_programming_solution(items, max_capacity);
+    const dynamic_programming: Solution = dynamic_programming_solution(problem, allocator);
     std.debug.print("dynamic programming solution:\n", .{});
-    print_solution(&dynamic_programming);
+    print_solution(&dynamic_programming, 1);
     std.debug.print("\n", .{});
 
-    const exhaustive_search: Solution = exhaustive_search_solution(items, max_capacity);
+    const exhaustive_search: Solution = exhaustive_search_solution(problem, allocator);
     std.debug.print("exhaustive search solution:\n", .{});
-    print_solution(&exhaustive_search);
+    print_solution(&exhaustive_search, 1);
     std.debug.print("\n", .{});
     
-    const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(items, max_capacity);
+    const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(problem, allocator);
     std.debug.print("depth first solution:\n", .{});
-    print_solution(&depth_first_branch_and_bound);
+    print_solution(&depth_first_branch_and_bound, 1);
     std.debug.print("\n", .{});
     
-    const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(items, max_capacity);
+    const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(problem, allocator);
     std.debug.print("best first solution:\n", .{});
-    print_solution(&best_first_branch_and_bound);
+    print_solution(&best_first_branch_and_bound, 1);
     std.debug.print("\n", .{});
 
-    const least_discrepancy_branch_and_bound: Solution = least_discrepancy_branch_and_bound_solution(items, max_capacity);
+    const least_discrepancy_branch_and_bound: Solution = least_discrepancy_branch_and_bound_solution(problem, allocator);
     std.debug.print("least discrepancy solution:\n", .{});
-    print_solution(&least_discrepancy_branch_and_bound);
+    print_solution(&least_discrepancy_branch_and_bound, 1);
 }
