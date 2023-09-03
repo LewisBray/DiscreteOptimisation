@@ -4,8 +4,10 @@
 #files
 *.java
 *.pdf
-*.py
 *.exe
 *.pdb
 *.obj
 _coursera
+
+solverJava.py
+submit.py
