@@ -1,10 +1,13 @@
-// least discrepency
-
 const std = @import("std");
 
 const Item = struct {
     value: u32,
     weight: u32
+};
+
+const Problem = struct {
+    items: []Item,
+    max_capacity: u32
 };
 
 const Solution = struct {
@@ -115,14 +118,6 @@ fn dynamic_programming_solution(items: []const Item, max_capacity: u32) Solution
             capacity -= items[item_index].weight;
         }
     }
-
-    // for (0..table_height) |row| {
-    //     for (0..table_width) |column| {
-    //         const value: u32 = table[table_width * row + column];
-    //         std.debug.print("{}\t", .{value});
-    //     }
-    //     std.debug.print("\n", .{});
-    // }
 
     return solution;
 }
@@ -542,99 +537,149 @@ fn least_discrepancy_branch_and_bound_solution(items: []const Item, max_capacity
     return solution;
 }
 
+fn is_whitespace(c: u8) bool {
+    return c == ' ' or c == '\n' or c == '\t' or c == '\r';
+}
+
+fn parse_u32(text: []u8) u32 {
+    var result: u32 = 0;
+    var multiplier: u32 = 1;
+    var index: isize = @as(isize, @bitCast(text.len)) - 1;
+    while (index >= 0) {
+        const digit_index: usize = @as(usize, @bitCast(index));
+        const digit: u32 = @as(u32, text[digit_index] - '0');
+        result += digit * multiplier;
+        multiplier *= 10;
+        index -= 1;
+    }
+
+    return result;
+}
+
+fn parse_problem(text: []u8) Problem {
+    var index: usize = 0;
+    while (is_whitespace(text[index])) {
+        index += 1;
+    }
+
+    const item_count_start: usize = index;
+    while (!is_whitespace(text[index])) {
+        index += 1;
+    }
+
+    const item_count: u32 = parse_u32(text[item_count_start..index]);
+
+    while (is_whitespace(text[index])) {
+        index += 1;
+    }
+
+    const max_capacity_start: usize = index;
+    while (!is_whitespace(text[index])) {
+        index += 1;
+    }
+
+    const max_capacity: u32 = parse_u32(text[max_capacity_start..index]);
+
+    var item_index: usize = 0;
+    var items: []Item = std.heap.page_allocator.alloc(Item, @as(usize, item_count)) catch unreachable;
+    while (index < text.len and item_index < @as(usize, item_count)) {
+        while (is_whitespace(text[index])) {
+            index += 1;
+        }
+
+        const value_start: usize = index;
+        while (!is_whitespace(text[index])) {
+            index += 1;
+        }
+
+        const value: u32 = parse_u32(text[value_start..index]);
+
+        while (is_whitespace(text[index])) {
+            index += 1;
+        }
+
+        const weight_start: usize = index;
+        while (!is_whitespace(text[index])) {
+            index += 1;
+        }
+
+        const weight: u32 = parse_u32(text[weight_start..index]);
+
+        items[item_index].value = value;
+        items[item_index].weight = weight;
+        item_index += 1;
+    }
+
+    return Problem{.items = items, .max_capacity = max_capacity};
+}
+
 pub fn main() void {
-//    const items = [3]Item{
-//       Item{.value = 5, .weight = 4},
-//       Item{.value = 6, .weight = 5},
-//       Item{.value = 3, .weight = 2}
-//    };
-//
-//    const max_capacity: u32 = 9;
-
-    const items = [4]Item{
-        Item{.value = 16, .weight = 2},
-        Item{.value = 19, .weight = 3},
-        Item{.value = 23, .weight = 4},
-        Item{.value = 28, .weight = 5}
+    const file = std.fs.cwd().openFile("data\\ks_lecture_dp_2", .{}) catch {
+        std.debug.print("Failed to open file for reading item values and weights", .{});
+        return;
     };
+    defer file.close();
 
-    const max_capacity: u32 = 7;
+    const file_size = file.getEndPos() catch unreachable;
+    var text: []u8 = std.heap.page_allocator.alloc(u8, file_size) catch unreachable;
+    _ = file.readAll(text) catch unreachable;
 
-//    const items = [19]Item{
-//        Item{.value = 1945, .weight = 4990},
-//        Item{.value = 321, .weight = 1142},
-//        Item{.value = 2945, .weight = 7390},
-//        Item{.value = 4136, .weight = 10372},
-//        Item{.value = 1107, .weight = 3114},
-//        Item{.value = 1022, .weight = 2744},
-//        Item{.value = 1101, .weight = 3102},
-//        Item{.value = 2890, .weight = 7280},
-//        Item{.value = 962, .weight = 2624},
-//        Item{.value = 1060, .weight = 3020},
-//        Item{.value = 805, .weight = 2310},
-//        Item{.value = 689, .weight = 2078},
-//        Item{.value = 1513, .weight = 3926},
-//        Item{.value = 3878, .weight = 9656},
-//        Item{.value = 13504, .weight = 32708},
-//        Item{.value = 1865, .weight = 4830},
-//        Item{.value = 667, .weight = 2034},
-//        Item{.value = 1833, .weight = 4766},
-//        Item{.value = 16553, .weight = 40006}
-//    };
-//
-//    const max_capacity: u32 = 31181;
+    const problem: Problem = parse_problem(text);
 
-    var values: [items.len]f32 = undefined;
+    const items: []Item = problem.items;
+    const max_capacity: u32 = problem.max_capacity;
+
+    var values: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         values[index] = @floatFromInt(items[index].value);
     }
 
-    const greedy_by_value: Solution = greedy_solution(&values, value_greater_than, &items, max_capacity);
+    const greedy_by_value: Solution = greedy_solution(values, value_greater_than, items, max_capacity);
     std.debug.print("greedy solution by value:\n", .{});
     print_solution(&greedy_by_value);
     std.debug.print("\n", .{});
 
-    var weights: [items.len]f32 = undefined;
+    var weights: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         weights[index] = @floatFromInt(items[index].weight);
     }
 
-    const greedy_by_weight: Solution = greedy_solution(&weights, value_less_than, &items, max_capacity);
+    const greedy_by_weight: Solution = greedy_solution(weights, value_less_than, items, max_capacity);
     std.debug.print("greedy solution by weight:\n", .{});
     print_solution(&greedy_by_weight);
     std.debug.print("\n", .{});
 
-    var value_densities: [items.len]f32 = undefined;
+    var value_densities: []f32 = std.heap.page_allocator.alloc(f32, items.len) catch unreachable;
     for (0..items.len) |index| {
         value_densities[index] = values[index] / weights[index];
     }
 
-    const greedy_by_value_density: Solution = greedy_solution(&value_densities, value_greater_than, &items, max_capacity);
+    const greedy_by_value_density: Solution = greedy_solution(value_densities, value_greater_than, items, max_capacity);
     std.debug.print("greedy solution by value density:\n", .{});
     print_solution(&greedy_by_value_density);
     std.debug.print("\n", .{});
 
-    const dynamic_programming: Solution = dynamic_programming_solution(&items, max_capacity);
+    const dynamic_programming: Solution = dynamic_programming_solution(items, max_capacity);
     std.debug.print("dynamic programming solution:\n", .{});
     print_solution(&dynamic_programming);
     std.debug.print("\n", .{});
 
-    const exhaustive_search: Solution = exhaustive_search_solution(&items, max_capacity);
+    const exhaustive_search: Solution = exhaustive_search_solution(items, max_capacity);
     std.debug.print("exhaustive search solution:\n", .{});
     print_solution(&exhaustive_search);
     std.debug.print("\n", .{});
     
-    const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(&items, max_capacity);
+    const depth_first_branch_and_bound: Solution = depth_first_branch_and_bound_solution(items, max_capacity);
     std.debug.print("depth first solution:\n", .{});
     print_solution(&depth_first_branch_and_bound);
     std.debug.print("\n", .{});
     
-    const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(&items, max_capacity);
+    const best_first_branch_and_bound: Solution = best_first_branch_and_bound_solution(items, max_capacity);
     std.debug.print("best first solution:\n", .{});
     print_solution(&best_first_branch_and_bound);
     std.debug.print("\n", .{});
 
-    const least_discrepancy_branch_and_bound: Solution = least_discrepancy_branch_and_bound_solution(&items, max_capacity);
+    const least_discrepancy_branch_and_bound: Solution = least_discrepancy_branch_and_bound_solution(items, max_capacity);
     std.debug.print("least discrepancy solution:\n", .{});
     print_solution(&least_discrepancy_branch_and_bound);
 }
