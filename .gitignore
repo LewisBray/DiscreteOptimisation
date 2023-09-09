@@ -7,6 +7,9 @@
 *.exe
 *.pdb
 *.obj
+*.dll
+*.lib
+*.pyc
 _coursera
 
 solverJava.py

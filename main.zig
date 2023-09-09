@@ -546,7 +546,7 @@ fn is_whitespace(c: u8) bool {
     return c == ' ' or c == '\n' or c == '\t' or c == '\r';
 }
 
-fn parse_u32(text: []u8) u32 {
+fn parse_u32(text: []const u8) u32 {
     var result: u32 = 0;
     var multiplier: u32 = 1;
     var index: isize = @as(isize, @bitCast(text.len)) - 1;
@@ -561,7 +561,7 @@ fn parse_u32(text: []u8) u32 {
     return result;
 }
 
-fn parse_problem(text: []u8, allocator: Allocator) Problem {
+fn parse_problem(text: []const u8, allocator: Allocator) Problem {
     var index: usize = 0;
     while (is_whitespace(text[index])) {
         index += 1;
@@ -616,6 +616,34 @@ fn parse_problem(text: []u8, allocator: Allocator) Problem {
     }
 
     return Problem{.items = items, .max_capacity = max_capacity};
+}
+
+export fn solve(text: [*:0]const u8) [*:0]const u8 {
+    const allocator: Allocator = std.heap.page_allocator;
+    
+    const problem: Problem = parse_problem(std.mem.span(text), allocator);
+    defer allocator.free(problem.items);
+
+    const solution: Solution = depth_first_branch_and_bound_solution(problem, allocator);
+    defer allocator.free(solution.decision_variables);
+
+    var output = std.ArrayList(u8).init(allocator);
+    var writer = output.writer();
+
+    var u32_buffer: [64]u8 = undefined;
+    @memset(u32_buffer[0..], 0);
+
+    _ = writer.write(std.fmt.bufPrint(u32_buffer[0..], "{} ", .{solution.objective_value}) catch unreachable) catch unreachable;
+    _ = writer.write("1 \n") catch unreachable;
+
+    for (solution.decision_variables) |decision_variable| {
+        @memset(u32_buffer[0..], 0);
+        _ = writer.write(std.fmt.bufPrint(u32_buffer[0..], "{} ", .{decision_variable}) catch unreachable) catch unreachable;
+    }
+
+    writer.writeByte(0) catch unreachable;
+
+    return @ptrCast(output.items.ptr);
 }
 
 pub fn main() void {
